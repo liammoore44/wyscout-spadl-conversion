@@ -59,6 +59,9 @@ pep8-naming = "^0.13.0"
 Pygments = "^2.12.0"
 pyupgrade = "^2.34.0"
 
+[tool.poetry.group.dev.dependencies]
+ipykernel = "^6.23.1"
+
 [tool.pytest.ini_options]
 filterwarnings = "ignore::DeprecationWarning:tables.*:"
 

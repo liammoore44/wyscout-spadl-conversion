@@ -735,8 +735,8 @@ def _convert_events(raw_events: pd.DataFrame) -> pd.DataFrame:
     eventmapping = {
         "id": "event_id",
         "match_id": "game_id",
-        "event_name": "type_name",
-        "sub_event_name": "subtype_name",
+        "event_name": "type_name", # type.primary
+        "sub_event_name": "subtype_name",  # list of type.secondary
     }
     cols = [
         "event_id",
