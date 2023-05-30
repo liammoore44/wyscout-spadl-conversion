@@ -4,7 +4,6 @@ private-notebooks*
 experiments/
 tests/datasets/*
 !tests/data/download.py
-Data/
 # Docs
 docs/api/generated
 
