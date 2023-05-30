@@ -522,11 +522,13 @@ def convert_touches(df_events: pd.DataFrame) -> pd.DataFrame:
     same_x = abs(df_events["end_x"] - df_events1["start_x"]) < min_dribble_length
     same_y = abs(df_events["end_y"] - df_events1["start_y"]) < min_dribble_length
     same_loc = same_x & same_y
-
+    df_events['same_loc'] = same_loc
+    df_events['same_team'] = selector_same_team
+    df_events['touch_other'] = selector_touch_other
     # df_events.loc[selector_touch_same_player & same_loc, 'subtype_id'] = 70
     # df_events.loc[selector_touch_same_player & same_loc, 'accurate'] = True
     # df_events.loc[selector_touch_same_player & same_loc, 'not_accurate'] = False
-
+    # return df_events
     df_events.loc[selector_touch_same_team & same_loc, "type_id"] = 8
     df_events.loc[selector_touch_same_team & same_loc, "subtype_id"] = 85
     df_events.loc[selector_touch_same_team & same_loc, "accurate"] = True
@@ -693,13 +695,13 @@ def determine_result_id(event: pd.DataFrame) -> int:  # noqa: C901
         return 1
     if event["not_accurate"]:
         return 0
-    if (
-        event["interception"] or event["clearance"] or event["subtype_id"] == 71
-    ):  # interception or clearance always success
-        return 1
-    if event["type_id"] == 9:  # keeper save always success
-        return 1
-    # no idea, assume it was successful
+    # if (
+    #     event["interception"] or event["clearance"] or event["subtype_id"] == 71
+    # ):  # interception or clearance always success
+    #     return 1
+    # if event["type_id"] == 9:  # keeper save always success
+    #     return 1
+    # # no idea, assume it was successful
     return 1
 
 

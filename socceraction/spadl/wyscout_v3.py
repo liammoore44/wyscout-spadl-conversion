@@ -43,8 +43,8 @@ def convert_to_actions(events: pd.DataFrame, home_team_id: int) -> DataFrame[SPA
     events["milliseconds"] = (events.second + (events.minute * 60)) * 1000
 
     events = make_new_positions(events)
-    events = fix_wyscout_events(events)
-    actions = create_df_actions(events)
+    events_fixed = fix_wyscout_events(events)
+    actions = create_df_actions(events_fixed)
     actions = fix_actions(actions)
     actions = _fix_direction_of_play(actions, home_team_id)
     actions = _fix_clearances(actions)
@@ -141,6 +141,18 @@ wyscout_tags = [
 ]
 
 
+def _make_position_vars(events: pd.DataFrame) -> pd.DataFrame:
+    # Join events with related events
+    related_events = events.merge(events, left_on='relatedEventId', right_on='id', suffixes=['', '_related_event'], how='left')
+    # Check that the related event came after the event
+    related_event_mask = ((related_events.id_related_event is not None)
+                          & (related_events.matchTimestamp <= related_events.matchTimestamp_related_event))
+    # Set end of event to the start position of its related event
+    related_events.loc[related_event_mask, "end_x"] = related_events.location_x_related_event
+    related_events.loc[related_event_mask, "end_y"] = related_events.location_y_related_event
+    return related_events
+
+
 def make_new_positions(events: pd.DataFrame) -> pd.DataFrame:
     """Extract the start and end coordinates for each action.
 
@@ -154,18 +166,18 @@ def make_new_positions(events: pd.DataFrame) -> pd.DataFrame:
     pd.DataFrame
         Wyscout event dataframe with start and end coordinates for each action.
     """
-    # Initialise start and end values 
+    # Initialise start and end values
     events["start_x"] = events.location_x
     events["start_y"] = events.location_y
     events["end_x"] = events.location_x
     events["end_y"] = events.location_y
+    events = _make_position_vars(events)
     # Update start and end values where possible
     events.loc[events.pass_accurate.notna(), "end_x"] = events.pass_endLocation_x
     events.loc[events.pass_accurate.notna(), "end_y"] = events.pass_endLocation_y
 
     events.loc[events.carry_progression.notna(), "end_x"] = events.carry_endLocation_x
     events.loc[events.carry_progression.notna(), "end_y"] = events.carry_endLocation_y
-    
     return events
 
 
@@ -242,30 +254,30 @@ def create_shot_coordinates(df_events: pd.DataFrame) -> pd.DataFrame:
     df_events.loc[out_right_idx, "end_y"] = 60.0
 
     out_left_idx = (
-       (df_events.shot_goalZone=='olb')
-        | (df_events.shot_goalZone=='ol')
-        | (df_events.shot_goalZone=='otl')
+       (df_events.shot_goalZone == 'olb')
+        | (df_events.shot_goalZone == 'ol')
+        | (df_events.shot_goalZone == 'otl')
     )
     df_events.loc[out_left_idx, "end_x"] = 100.0
     df_events.loc[out_left_idx, "end_y"] = 40.0
 
     post_left_idx = (
-        (df_events.shot_goalZone=='ptl')
-        | (df_events.shot_goalZone=='pl')
-        | (df_events.shot_goalZone=='plb')
+        (df_events.shot_goalZone == 'ptl')
+        | (df_events.shot_goalZone == 'pl')
+        | (df_events.shot_goalZone == 'plb')
     )
     df_events.loc[post_left_idx, "end_x"] = 100.0
     df_events.loc[post_left_idx, "end_y"] = 55.38
 
     post_right_idx = (
-        (df_events.shot_goalZone=='ptr')
-        | (df_events.shot_goalZone=='pr')
-        | (df_events.shot_goalZone=='pbr')
+        (df_events.shot_goalZone == 'ptr')
+        | (df_events.shot_goalZone == 'pr')
+        | (df_events.shot_goalZone == 'pbr')
     )
     df_events.loc[post_right_idx, "end_x"] = 100.0
     df_events.loc[post_right_idx, "end_y"] = 44.62
 
-    blocked_idx = (df_events.shot_goalZone=="bc")
+    blocked_idx = (df_events.shot_goalZone == "bc")
     df_events.loc[blocked_idx, "end_x"] = df_events.loc[blocked_idx, "start_x"]
     df_events.loc[blocked_idx, "end_y"] = df_events.loc[blocked_idx, "start_y"]
 
@@ -381,6 +393,7 @@ def insert_interception_passes(df_events: pd.DataFrame) -> pd.DataFrame:
 
     if not df_events_interceptions.empty:
         df_events_interceptions["type_primary"] = "interception"
+        df_events_interceptions["type_secondary"] = "interception"
         df_events_interceptions["id"] = df_events_interceptions["id"]
         df_events_interceptions[["end_x", "end_y"]] = df_events_interceptions[
             ["start_x", "start_y"]
@@ -505,7 +518,10 @@ def convert_touches(df_events: pd.DataFrame) -> pd.DataFrame:
     same_x = abs(df_events["end_x"] - df_events1["start_x"]) < min_dribble_length
     same_y = abs(df_events["end_y"] - df_events1["start_y"]) < min_dribble_length
     same_loc = same_x & same_y
-
+    df_events['same_loc'] = same_loc
+    df_events['same_team'] = selector_same_team
+    df_events['touch_other'] = selector_touch_other
+    # return df_events
     df_events.loc[selector_touch_same_team & same_loc, "type_primary"] = "pass"
     df_events.loc[selector_touch_same_team & same_loc, "type_secondary"] = "pass"
     df_events.loc[selector_touch_same_team & same_loc, "accurate"] = True
@@ -568,13 +584,14 @@ def determine_bodypart_id(event: pd.DataFrame) -> int:
     -------
     int
         id of the body part used for the action
-    """    
-
-    if event.type_primary in ["save", "throw_in"] or event.infraction_type == "hand_foul" or "hand_pass" in event.type_secondary:
+    """
+    if (event.type_primary in ["save", "throw_in"]
+        or event.infraction_type == "hand_foul"
+        or (event.type_secondary != None and "hand_pass" in event.type_secondary)):
         body_part = "other"
-    elif "head_pass" in event.type_secondary:
+    elif event.type_secondary != None and "head_pass" in event.type_secondary:
         body_part = "head"
-    elif "head_shot" in event.type_secondary:
+    elif event.type_secondary != None and "head_shot" in event.type_secondary:
         body_part = "head/other"
     elif event.shot_bodyPart == "left_foot":
         body_part = "foot_left"
@@ -618,35 +635,33 @@ def determine_type_id(event: pd.DataFrame) -> int:  # noqa: C901
         else:
             action_type = "corner_short"
     elif event.type_primary == "free_kick":
-        if "free_kick_cross" in event.type_secondary:
+        if event.type_secondary is not None and "free_kick_cross" in event.type_secondary:
             action_type = "freekick_crossed"
         else:
             action_type = "freekick_short"
     elif event.type_primary == "goal_kick":
         action_type = "goalkick"
-    elif event.type_primary == "infraction":
-    # and (event["subtype_id"] not in [22, 23, 24, 26]): NEED TO FIND OUT WHAT THESE ARE
+    elif event.type_primary == "infraction" and (event.infraction_type not in ["protest_foul", "late_card_foul", "out_of_play_foul", "time_lost_foul"]):
         action_type = "foul"
     elif event.type_primary == "shot":
         action_type = "shot"
     elif event.type_primary == "penalty":
         action_type = "shot_penalty"
-    elif "free_kick_shot" in event.type_secondary:
+    elif event.type_secondary is not None and "free_kick_shot" in event.type_secondary:
         action_type = "shot_freekick"
-    elif any(item in ["penalty_save", "save", "save_with_reflex"] for item in event.type_secondary):
+    elif event.type_primary == "shot_against":
         action_type = "keeper_save"
     elif event.type_primary == "clearance":
         action_type = "clearance"
-    elif event.type_primary == "touch" and event["not_accurate"]: # Not accurate flag might cuase an issue
+    elif event.type_primary == "touch" and event.not_accurate is True:  # Not accurate flag might cuase an issue
         action_type = "bad_touch"
-    elif "dribble" in event.type_secondary:
-        if event.groundDuel_takeOn == True:
-            action_type = "take_on"
-        else:
-            action_type = "dribble"
-    elif "sliding_tackle" in event.type_secondary:
+    elif event.type_primary == "acceleration":
+        action_type = "dribble"
+    elif event.groundDuel_takeOn is True:
+        action_type = "take_on"
+    elif event.type_secondary is not None and "sliding_tackle" in event.type_secondary:
         action_type = "tackle"
-    elif event.type_primary == "interception":
+    elif event.type_primary == "interception" and (event.type_secondary == "interception" or "recovery" in event.type_secondary):
         action_type = "interception"
     else:
         action_type = "non_action"
@@ -666,26 +681,28 @@ def determine_result_id(event: pd.DataFrame) -> int:  # noqa: C901
     int
         result of the action
     """
-    if event["offside"] == 1:
+    if event.type_primary == "offside":
         return 2
-    if event["type_id"] == 2:  # foul
+    if event.type_primary == "infraction":  # foul
         return 1
-    if event["goal"]:  # goal
+    if event.shot_isGoal is True:  # goal
         return 1
-    if event["own_goal"]:  # own goal
+    if event.type_primary == "own_goal":  # own goal
         return 3
-    if event["subtype_id"] in [100, 33, 35]:  # no goal, so 0
+    if event.shot_isGoal is False:  # no goal, so 0
+        return 0
+    if event.pass_accurate is False:
         return 0
     if event["accurate"]:
         return 1
     if event["not_accurate"]:
         return 0
-    if (
-        event["interception"] or event["clearance"] or event["subtype_id"] == 71
-    ):  # interception or clearance always success
-        return 1
-    if event["type_id"] == 9:  # keeper save always success
-        return 1
+    # if (
+    #     event.type_primary in ["interception", "clearance"]
+    # ):  # interception or clearance always success
+    #     return 1
+    # if "save" in event.type_secondary:  # keeper save always success
+    #     return 1
     # no idea, assume it was successful
     return 1
 
