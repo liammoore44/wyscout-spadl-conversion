@@ -41,7 +41,8 @@ def convert_to_actions(events: pd.DataFrame, home_team_id: int) -> DataFrame[SPA
     """
     events["period_id"] = events.matchPeriod.apply(lambda x: wyscout_periods[x])
     events["milliseconds"] = (events.second + (events.minute * 60)) * 1000
-
+    events["time_seconds"] = events["milliseconds"] / 1000
+    events = events.rename(columns={"matchId": "game_id"})
     events = make_new_positions(events)
     events_fixed = fix_wyscout_events(events)
     actions = create_df_actions(events_fixed)
@@ -52,6 +53,21 @@ def convert_to_actions(events: pd.DataFrame, home_team_id: int) -> DataFrame[SPA
     actions = _add_dribbles(actions)
 
     return cast(DataFrame[SPADLSchema], actions)
+
+
+# def make_accuracy_flags(events: pd.DataFrame) -> pd.DataFrame:
+#     # Accurate
+#     events['accurate'] = False
+#     events.loc[events.shot_onTarget == True, 'accurate'] = True
+#     events.loc[events.pass_accurate == True, 'accurate'] = True
+#     events.loc[events.type_secondary.apply(lambda x: "save" in x), 'accurate'] = True
+#     events.loc[events.aerialDuel_firstTouch == True, 'accurate'] = True
+#     events.loc[(events.groundDuel_keptPossession==True), 'accurate'] = True
+#     events.loc[((events.groundDuel_stoppedProgress==True) | (events.groundDuel_recoveredPossession==True)), 'accurate'] = True
+
+#     # Non Accurate
+    
+#     return events
 
 
 def _get_tag_set(tags: List[Dict[str, Any]]) -> Set[int]:
@@ -697,12 +713,12 @@ def determine_result_id(event: pd.DataFrame) -> int:  # noqa: C901
         return 1
     if event["not_accurate"]:
         return 0
-    # if (
-    #     event.type_primary in ["interception", "clearance"]
-    # ):  # interception or clearance always success
-    #     return 1
-    # if "save" in event.type_secondary:  # keeper save always success
-    #     return 1
+    if (
+        event.type_primary in ["interception", "clearance"]
+    ):  # interception or clearance always success
+        return 1
+    if "save" in event.type_secondary:  # keeper save always success
+        return 1
     # no idea, assume it was successful
     return 1
 

@@ -695,12 +695,12 @@ def determine_result_id(event: pd.DataFrame) -> int:  # noqa: C901
         return 1
     if event["not_accurate"]:
         return 0
-    # if (
-    #     event["interception"] or event["clearance"] or event["subtype_id"] == 71
-    # ):  # interception or clearance always success
-    #     return 1
-    # if event["type_id"] == 9:  # keeper save always success
-    #     return 1
+    if (
+        event["interception"] or event["clearance"] or event["subtype_id"] == 71
+    ):  # interception or clearance always success
+        return 1
+    if event["type_id"] == 9:  # keeper save always success
+        return 1
     # # no idea, assume it was successful
     return 1
 

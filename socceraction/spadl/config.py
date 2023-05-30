@@ -41,7 +41,7 @@ actiontypes: List[str] = [
     'take_on',
     'foul',
     'tackle',
-    'interception',#10
+    'interception',  #10
     'shot',
     'shot_penalty',
     'shot_freekick',
