@@ -42,6 +42,7 @@ def convert_to_actions(events: pd.DataFrame, home_team_id: int) -> DataFrame[SPA
     events = make_new_positions(events)
     events = fix_wyscout_events(events)
     actions = create_df_actions(events)
+    return actions
     actions = fix_actions(actions)
     actions = _fix_direction_of_play(actions, home_team_id)
     actions = _fix_clearances(actions)

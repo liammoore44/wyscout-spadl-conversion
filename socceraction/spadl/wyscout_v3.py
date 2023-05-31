@@ -46,6 +46,7 @@ def convert_to_actions(events: pd.DataFrame, home_team_id: int) -> DataFrame[SPA
     events = make_new_positions(events)
     events_fixed = fix_wyscout_events(events)
     actions = create_df_actions(events_fixed)
+    return actions
     actions = fix_actions(actions)
     actions = _fix_direction_of_play(actions, home_team_id)
     actions = _fix_clearances(actions)
@@ -158,15 +159,21 @@ wyscout_tags = [
 
 
 def _make_position_vars(events: pd.DataFrame) -> pd.DataFrame:
-    # Join events with related events
-    related_events = events.merge(events, left_on='relatedEventId', right_on='id', suffixes=['', '_related_event'], how='left')
-    # Check that the related event came after the event
-    related_event_mask = ((related_events.id_related_event is not None)
-                          & (related_events.matchTimestamp <= related_events.matchTimestamp_related_event))
-    # Set end of event to the start position of its related event
-    related_events.loc[related_event_mask, "end_x"] = related_events.location_x_related_event
-    related_events.loc[related_event_mask, "end_y"] = related_events.location_y_related_event
-    return related_events
+    event_t1 = events.shift(-1)
+    event_t2 = events.shift(-2)
+    related_ground_duel = events.groundDuel_relatedDuelId == event_t1.id
+    related_aerial_duel = events.aerialDuel_relatedDuelId == event_t1.id
+    related_duel = related_ground_duel | related_aerial_duel
+    events['related_duel'] = False
+    events.loc[related_duel, 'related_duel'] = True
+    # If the next event is related as a duel, then we take the event after it
+    events['end_x'] = np.where(related_duel,
+                               np.where(event_t2.team_id == events.team_id,
+                                        event_t2.location_x,
+                                        100 - event_t2.location_x),
+                               events.end_x)
+    events['end_y'] = np.where(related_duel, event_t2.location_y, events.end_y)
+    return events
 
 
 def make_new_positions(events: pd.DataFrame) -> pd.DataFrame:
@@ -185,15 +192,16 @@ def make_new_positions(events: pd.DataFrame) -> pd.DataFrame:
     # Initialise start and end values
     events["start_x"] = events.location_x
     events["start_y"] = events.location_y
-    events["end_x"] = events.location_x
-    events["end_y"] = events.location_y
+    events["end_x"] = np.where(events.team_id == events.team_id.shift(-1), events.location_x.shift(-1), 100 - events.location_x.shift(-1))
+    events.loc[events.end_x == None, 'end_x'] = events.location_x
+    events["end_y"] = events.location_y.shift(-1)
     events = _make_position_vars(events)
     # Update start and end values where possible
-    events.loc[events.pass_accurate.notna(), "end_x"] = events.pass_endLocation_x
-    events.loc[events.pass_accurate.notna(), "end_y"] = events.pass_endLocation_y
+    events.loc[events.pass_endLocation_x.notna(), "end_x"] = events.pass_endLocation_x
+    events.loc[events.pass_endLocation_y.notna(), "end_y"] = events.pass_endLocation_y
 
-    events.loc[events.carry_progression.notna(), "end_x"] = events.carry_endLocation_x
-    events.loc[events.carry_progression.notna(), "end_y"] = events.carry_endLocation_y
+    events.loc[events.carry_endLocation_x.notna(), "end_x"] = events.carry_endLocation_x
+    events.loc[events.carry_endLocation_y.notna(), "end_y"] = events.carry_endLocation_y
     return events
 
 
@@ -677,8 +685,13 @@ def determine_type_id(event: pd.DataFrame) -> int:  # noqa: C901
         action_type = "take_on"
     elif event.type_secondary is not None and "sliding_tackle" in event.type_secondary:
         action_type = "tackle"
-    elif event.type_primary == "interception" and (event.type_secondary == "interception" or "recovery" in event.type_secondary):
-        action_type = "interception"
+    elif event.type_primary == "interception":
+        if any(["pass" in x for x in event.type_secondary]):
+            action_type = "pass"
+        elif event.type_secondary == "interception" or "recovery" in event.type_secondary:
+            action_type = "interception"
+        else:
+            action_type = "non_action"
     else:
         action_type = "non_action"
     return spadlconfig.actiontypes.index(action_type)
