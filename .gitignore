@@ -6,7 +6,8 @@ tests/datasets/*
 !tests/data/download.py
 # Docs
 docs/api/generated
-
+Data/wyscout-v2/*
+test_notebooks/wyscout_v2_test/wyscout_data/*
 # Nox
 .nox
 .nox-*

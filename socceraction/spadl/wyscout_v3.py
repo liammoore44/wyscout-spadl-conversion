@@ -46,7 +46,7 @@ def convert_to_actions(events: pd.DataFrame, home_team_id: int) -> DataFrame[SPA
     events = make_new_positions(events)
     events_fixed = fix_wyscout_events(events)
     actions = create_df_actions(events_fixed)
-    return actions
+    # return actions
     actions = fix_actions(actions)
     actions = _fix_direction_of_play(actions, home_team_id)
     actions = _fix_clearances(actions)
@@ -158,14 +158,18 @@ wyscout_tags = [
 ]
 
 
-def _make_position_vars(events: pd.DataFrame) -> pd.DataFrame:
+def _make_position_from_duels(events: pd.DataFrame) -> pd.DataFrame:
     event_t1 = events.shift(-1)
     event_t2 = events.shift(-2)
     related_ground_duel = events.groundDuel_relatedDuelId == event_t1.id
     related_aerial_duel = events.aerialDuel_relatedDuelId == event_t1.id
-    related_duel = related_ground_duel | related_aerial_duel
+    # There is a case when we have type primary as duel but all the duel fields as Nan and relatesdDuel = False
+    related_duel_other = (events.type_primary == "duel") & (event_t1.type_primary == "duel") & (events.location_x == 100 - event_t1.location_x) & (events.location_y == 100 - event_t1.location_y)
+    related_duel = related_ground_duel | related_aerial_duel | related_duel_other
+    is_duel = events.type_primary == "duel"
+    events['is_duel'] = is_duel
     events['related_duel'] = False
-    events.loc[related_duel, 'related_duel'] = True
+    events.loc[related_duel & is_duel, 'related_duel'] = True
     # If the next event is related as a duel, then we take the event after it
     events['end_x'] = np.where(related_duel,
                                np.where(event_t2.team_id == events.team_id,
@@ -173,6 +177,18 @@ def _make_position_vars(events: pd.DataFrame) -> pd.DataFrame:
                                         100 - event_t2.location_x),
                                events.end_x)
     events['end_y'] = np.where(related_duel, event_t2.location_y, events.end_y)
+    return events
+
+
+def _make_positions_from_fouls(events: pd.DataFrame) -> pd.DataFrame:
+    event_t_minus_1 = events.shift(1)
+    same_team = event_t_minus_1.possession_team_id == events.team_id
+    foul = events.type_primary == "infraction"
+    # Set the foul value equal to the possession end before the foul (since fouls technically happen outside of a possession)
+    events.loc[foul & same_team, "end_x"] = event_t_minus_1.possession_endLocation_x
+    events.loc[foul & ~same_team, "end_x"] = 100 - event_t_minus_1.possession_endLocation_x
+    events.loc[foul & same_team, "end_y"] = event_t_minus_1.possession_endLocation_y
+    events.loc[foul & ~same_team, "end_y"] = 100 - event_t_minus_1.possession_endLocation_y 
     return events
 
 
@@ -193,15 +209,22 @@ def make_new_positions(events: pd.DataFrame) -> pd.DataFrame:
     events["start_x"] = events.location_x
     events["start_y"] = events.location_y
     events["end_x"] = np.where(events.team_id == events.team_id.shift(-1), events.location_x.shift(-1), 100 - events.location_x.shift(-1))
-    events.loc[events.end_x == None, 'end_x'] = events.location_x
-    events["end_y"] = events.location_y.shift(-1)
-    events = _make_position_vars(events)
+    events.loc[events.end_x.isna(), 'end_x'] = events.location_x
+    events["end_y"] = np.where(events.team_id == events.team_id.shift(-1), events.location_y.shift(-1), 100 - events.location_y.shift(-1))
+    events = _make_position_from_duels(events)
+    events = _make_positions_from_fouls(events)
     # Update start and end values where possible
     events.loc[events.pass_endLocation_x.notna(), "end_x"] = events.pass_endLocation_x
     events.loc[events.pass_endLocation_y.notna(), "end_y"] = events.pass_endLocation_y
 
     events.loc[events.carry_endLocation_x.notna(), "end_x"] = events.carry_endLocation_x
     events.loc[events.carry_endLocation_y.notna(), "end_y"] = events.carry_endLocation_y
+
+    events.loc[events.type_primary == "game_interruption", "end_x"] = events.location_x
+    events.loc[events.type_primary == "game_interruption", "end_y"] = events.location_y
+
+    events.loc[events.type_secondary.apply(lambda x: x is not None and "conceded_goal" in x), "end_x"] = 100 - events.location_x.shift(1)
+    events.loc[events.type_secondary.apply(lambda x: x is not None and "conceded_goal" in x), "end_y"] = 100 - events.location_y.shift(1) 
     return events
 
 
